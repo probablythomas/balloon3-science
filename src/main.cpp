@@ -1,154 +1,31 @@
-// #include <Arduino.h>
-// #include <SonicRange.h>
-// #include <Wire.h>
-// //#include <Adafruit_BMP085.h>
-// #include <Adafruit_VL53L0X.h>
-// #include <SPI.h>
-// #include <SD.h>
-
-// void initializeCard();
-
-// const int ultraTrig = 6;
-// const int ultraEcho = 7;
-// SonicRange sonic(ultraTrig,ultraEcho);
-
-// const int buzzer = 5;
-
-// //Adafruit_BMP085 bmp;
-// Adafruit_VL53L0X lox = Adafruit_VL53L0X();
-
-// float timeOfFlight;
-
-// File fd;
-// const uint8_t BUFFER_SIZE = 20;
-// char fileName[] = "demoFile.txt"; // SD library only supports up to 8.3 names
-// char buff[BUFFER_SIZE+2] = "";  // Added two to allow a 2 char peek for EOF state
-// uint8_t index = 0;
-
-// const uint8_t chipSelect = 8;
-// const uint8_t cardDetect = 9;
-
-// enum states: uint8_t { NORMAL, E, EO };
-// uint8_t state = NORMAL;
-
-// bool alreadyBegan = false;  // SD.begin() misbehaves if not first call
-
-// void setup() {
-//     Serial.begin(9600);
-//     pinMode(buzzer,OUTPUT);
-
-//     //bmp.begin();
-//     lox.begin();
-
-//     pinMode(cardDetect, INPUT);
-
-//     initializeCard();
-//       // see if the card is present and can be initialized:
-//     if (!SD.begin(chipSelect)) {
-//         Serial.println("Card failed, or not present");
-//         // don't do anything more:
-//         while (1);
-//     }
-//     Serial.println("card initialized.");
-// }
-
-// void loop() {
-//     // put your main code here, to run repeatedly:
-//     Serial.print(sonic.getTime());
-//     Serial.print('\t');
-//     Serial.println(sonic.getRange());
-
-// /*     Serial.print("Temperature = ");
-//     Serial.print(bmp.readTemperature());
-//     Serial.println(" *C");
-    
-//     Serial.print("Pressure = ");
-//     Serial.print(bmp.readPressure());
-//     Serial.println(" Pa");
-    
-//     // Calculate altitude assuming 'standard' barometric
-//     // pressure of 1013.25 millibar = 101325 Pascal
-//     Serial.print("Altitude = ");
-//     Serial.print(bmp.readAltitude());
-//     Serial.println(" meters");
-
-//     // you can get a more precise measurement of altitude
-//     // if you know the current sea level pressure which will
-//     // vary with weather and such. If it is 1015 millibars
-//     // that is equal to 101500 Pascals.
-//     Serial.print("Real altitude = ");
-//     Serial.print(bmp.readAltitude(101500));
-//     Serial.println(" meters");
-//  */
-
-//     VL53L0X_RangingMeasurementData_t measure;
-
-//     Serial.print("Reading a measurement... ");
-//     lox.rangingTest(&measure, false); // pass in 'true' to get debug data printout!
-
-//     if (measure.RangeStatus != 4) {  // phase failures have incorrect data
-//         Serial.print("Distance (mm): "); Serial.println(measure.RangeMilliMeter);
-//     } else {
-//         Serial.println(" out of range ");
-//     }
-
-//     delay(1000);
-// }
-
-// void initializeCard()
-// {
-//   Serial.print(F("Initializing SD card..."));
-
-//   // Is there even a card?
-//   if (!digitalRead(cardDetect))
-//   {
-//     Serial.println(F("No card detected. Waiting for card."));
-//     while (!digitalRead(cardDetect));
-//     delay(250); // 'Debounce insertion'
-//   }
-// /*
-//   // Card seems to exist.  begin() returns failure
-//   // even if it worked if it's not the first call.
-//   if (!SD.begin(chipSelect) && !alreadyBegan)  // begin uses half-speed...
-//   {
-//     Serial.println(F("Initialization failed!"));
-//     initializeCard(); // Possible infinite retry loop is as valid as anything
-//   }
-//   else
-//   {
-//     alreadyBegan = true;
-//   }
-//   Serial.println(F("Initialization done."));
-
-//   Serial.print(fileName);
-//   if (SD.exists(fileName))
-//   {
-//     Serial.println(F(" exists."));
-//   }
-//   else
-//   {
-//     Serial.println(F(" doesn't exist. Creating."));
-//   }
-
-//   Serial.print("Opening file: ");
-//   Serial.println(fileName); */
-// }
 #include <Arduino.h>
 #include <Wire.h>
 #include <SPI.h>
 #include <SD.h>
 #include <SonicRange.h>
-
-const int chipSelect = 8;
-char filename[] = "test1.txt";
+// #include "Adafruit_VL53L0X.h"
+#include <VL53L0X.h>
 
 // initialize the sonic sensor
 const int echo = 7;
 const int trig = 6;
 SonicRange sonic(trig,echo);
-
 long sonicTime;
 float sonicDistance;
+
+// initialize the light range sensor
+// Adafruit_VL53L0X lox = Adafruit_VL53L0X();
+VL53L0X light;
+long lightDistance;
+
+// Loop timing
+unsigned long WaitTime = 1000;
+unsigned long previousMillis = 0;
+
+// SD card info
+const int chipSelect = 8;
+char filename[] = "DATA0000.CSV";
+File dataFile;
 
 void setup() {
   // Open serial communications and wait for port to open:
@@ -157,49 +34,115 @@ void setup() {
     ; // wait for serial port to connect. Needed for native USB port only
   }
 
-  Serial.print("Initializing SD card...");
+  Wire.begin();
+
+  Serial.print(F("Initializing SD card: "));
 
   // see if the card is present and can be initialized:
   if (!SD.begin(chipSelect)) {
-    Serial.println("Card failed, or not present");
+    Serial.println(F("Card failed, or not present"));
     // don't do anything more:
     while (1);
   }
-  Serial.println("Card initialized.");
+  Serial.println(F("Card initialized."));
 
+  // create a new file
+  Serial.print(F("Creating new log file: "));
+  for (uint8_t i = 0; i < 256; i++) 
+  {
+    filename[4] = (i/1000) % 10 + '0';
+    filename[5] = (i/100) % 10 + '0';
+    filename[6] = (i/10) % 10 + '0';
+    filename[7] = i%10 + '0';
+    if (!SD.exists(filename)) 
+    {
+      dataFile = SD.open(filename, FILE_WRITE); 
+      break;  // leave the loop!
+    }
+  }
+  
+  if (!dataFile) {
+    Serial.println(F("Failed -- cannot create new file"));
+    while (1);
+  }
+
+  Serial.print(F("Success -- new filename "));
+  Serial.println(filename);
+  
+  dataFile.print(F("millis,sonicTime,sonicDistance,lightDistance"));
+  dataFile.print(F(","));
+  dataFile.print(F("a_x,a_y,a_z,w_x,w_y,w_z,b_x,b_y,b_z"));  
+  dataFile.print(F(","));
+  dataFile.println(F("temp,rh,press,alt"));
+
+  dataFile.close();
+
+  Serial.print(F("Initialize VL53L0X: "));
+  light.init();
+  light.setTimeout(500);
+  // if (!lox.begin()) {
+  //   Serial.println(F("FAILED"));
+  //   while(1);
+  // }
+  // else {
+    Serial.println(F("SUCCESS"));
+  // }
 }
 
 void loop() {
-  delay(200);
+  unsigned long currentMillis = millis();
 
-  // prepare for a round of data collection
-  String dataString = "";
+  if (currentMillis - previousMillis >= WaitTime)
+  {
+    // *** prepare for a round of data collection ***
+    // String dataString = "";
 
-  // collect data
-  sonicTime = sonic.getTime();
-  sonicDistance = sonic.getRange();
+    // *** collect data ***
+    // 1) sonic range data (science!)
+    sonicTime = sonic.getTime();
+    sonicDistance = sonic.getRange();
 
-  // append data to the output string
+    // 2) light range data (science!)
+    lightDistance = light.readRangeSingleMillimeters();
+    // VL53L0X_RangingMeasurementData_t measure;
+    // lox.rangingTest(&measure, false); // pass in 'true' to get debug data printout!
+
+    // if (measure.RangeStatus != 4) {  // phase failures have incorrect data
+    //   lightDistance = measure.RangeMilliMeter;
+    // } else {
+    //   lightDistance = 0.0;
+    // }
+
+    // 3) attitude telemetry
+  
+
+    // 4) temperature, humidity, and pressure telemetry
 
 
-  // write string to SD memory
-  File dataFile = SD.open(filename, FILE_WRITE);
-  Serial.print("Saving to file: ");
-  Serial.println(filename);
+    // append data to the output string
+    //dataString += String(sonicTime);
 
-  // if the file is available, write to it:
-  if (dataFile) {
-    dataFile.print(sonicTime);
-    dataFile.print('\t');
-    dataFile.println(sonicDistance);
-    dataFile.close();
+    // write to SD memory
+    dataFile = SD.open(filename, FILE_WRITE);
+
+    // if the file is available, write to it:
+    if (dataFile) {
+      dataFile.print(sonicTime);
+      dataFile.print(',');
+      dataFile.print(sonicDistance);
+      dataFile.print(',');
+      dataFile.println(lightDistance);
+      dataFile.close();
+
+    }
+    // if the file isn't open, pop up an error:
+    else {
+      Serial.println("error opening file");
+    }
+
     // print to the serial port too:
-    Serial.print(sonicTime);
-    Serial.print('\t');
-    Serial.println(sonicDistance);
-  }
-  // if the file isn't open, pop up an error:
-  else {
-    Serial.println("error opening file");
+    // Serial.println(sonicTime);
+    // Serial.println(sonicDistance);
+    // Serial.println(lightDistance);
   }
 }
