@@ -3,8 +3,15 @@
 #include <SPI.h>
 #include <SD.h>
 #include <SonicRange.h>
-// #include "Adafruit_VL53L0X.h"
 #include <VL53L0X.h>
+#include <Adafruit_LSM9DS1.h>
+#include <Adafruit_BME280.h>
+#include <Adafruit_Sensor.h>
+
+#define SEALEVELPRESSURE_HPA (1013.25)
+
+// function declarations
+void initHardware();
 
 // initialize the sonic sensor
 const int echo = 7;
@@ -16,10 +23,20 @@ float sonicDistance;
 // initialize the light range sensor
 // Adafruit_VL53L0X lox = Adafruit_VL53L0X();
 VL53L0X light;
-long lightDistance;
+unsigned int lightDistance;
+
+// initialize the lsm9ds1 attitude sensor
+Adafruit_LSM9DS1 lsm = Adafruit_LSM9DS1();
+
+// initialize the bme280 environment sensor
+Adafruit_BME280 bme;
+float temperature;
+float pressure;
+float altitude;
+float humidity;
 
 // Loop timing
-unsigned long WaitTime = 1000;
+const unsigned long WaitTime = 1000;
 unsigned long previousMillis = 0;
 
 // SD card info
@@ -33,6 +50,8 @@ void setup() {
   while (!Serial) {
     ; // wait for serial port to connect. Needed for native USB port only
   }
+
+  initHardware();
 
   Wire.begin();
 
@@ -94,9 +113,6 @@ void loop() {
 
   if (currentMillis - previousMillis >= WaitTime)
   {
-    // *** prepare for a round of data collection ***
-    // String dataString = "";
-
     // *** collect data ***
     // 1) sonic range data (science!)
     sonicTime = sonic.getTime();
@@ -104,34 +120,55 @@ void loop() {
 
     // 2) light range data (science!)
     lightDistance = light.readRangeSingleMillimeters();
-    // VL53L0X_RangingMeasurementData_t measure;
-    // lox.rangingTest(&measure, false); // pass in 'true' to get debug data printout!
-
-    // if (measure.RangeStatus != 4) {  // phase failures have incorrect data
-    //   lightDistance = measure.RangeMilliMeter;
-    // } else {
-    //   lightDistance = 0.0;
-    // }
 
     // 3) attitude telemetry
-  
+    lsm.read();
+    sensors_event_t a, m, g, temp;
+    lsm.getEvent(&a, &m, &g, &temp); 
 
     // 4) temperature, humidity, and pressure telemetry
+    temperature = bme.readTemperature();
+    pressure = bme.readPressure() / 1000.0F;
+    altitude = bme.readAltitude(SEALEVELPRESSURE_HPA);
+    humidity = bme.readHumidity();
 
-
-    // append data to the output string
-    //dataString += String(sonicTime);
-
-    // write to SD memory
+    // *** write to SD memory ***
     dataFile = SD.open(filename, FILE_WRITE);
-
-    // if the file is available, write to it:
     if (dataFile) {
+      dataFile.print(currentMillis);
+      dataFile.print(',');
       dataFile.print(sonicTime);
       dataFile.print(',');
       dataFile.print(sonicDistance);
       dataFile.print(',');
-      dataFile.println(lightDistance);
+      dataFile.print(lightDistance);
+      dataFile.print(',');
+      dataFile.print(a.acceleration.x);
+      dataFile.print(',');
+      dataFile.print(a.acceleration.y);
+      dataFile.print(',');
+      dataFile.print(a.acceleration.z);
+      dataFile.print(',');
+      dataFile.print(g.gyro.x);
+      dataFile.print(',');
+      dataFile.print(g.gyro.y);
+      dataFile.print(',');
+      dataFile.print(g.gyro.z);
+      dataFile.print(',');
+      dataFile.print(m.magnetic.x);
+      dataFile.print(',');
+      dataFile.print(m.magnetic.y);
+      dataFile.print(',');
+      dataFile.print(m.magnetic.z);
+      dataFile.print(',');
+      dataFile.print(temperature);
+      dataFile.print(',');
+      dataFile.print(humidity);
+      dataFile.print(',');
+      dataFile.print(pressure);
+      dataFile.print(',');
+      dataFile.print(altitude);
+      dataFile.println();
       dataFile.close();
 
     }
@@ -145,4 +182,31 @@ void loop() {
     // Serial.println(sonicDistance);
     // Serial.println(lightDistance);
   }
+}
+
+void initHardware()
+{
+  // *** Attitude sensor -- 9DOF LSM9DS1 ***
+  lsm.setupAccel(lsm.LSM9DS1_ACCELRANGE_2G);
+  lsm.setupMag(lsm.LSM9DS1_MAGGAIN_4GAUSS);
+  lsm.setupGyro(lsm.LSM9DS1_GYROSCALE_245DPS);
+
+  // Try to initialise and warn if we couldn't detect the chip
+  Serial.print(F("Start LSM9DS1: "));
+  if (!lsm.begin())
+  {
+    Serial.println(F("FAILED"));
+    while (1);
+  }
+  Serial.println(F("SUCCESS"));
+  // ***************************************
+
+  // *** Environment sensor -- BME 280 ***
+  Serial.print(F("Start BME280: "));
+  if (!bme.begin()) {
+    Serial.println(F("FAILED"));
+    while (1);
+  }
+  Serial.println(F("SUCCESS"));
+  // **************************************
 }
